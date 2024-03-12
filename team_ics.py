@@ -56,7 +56,11 @@ def ics():
   f.write(f"X-WR-CALDESC:{CALDESC}\n")
   
   soup = fetch(SOURCE)
-  for match in soup.find("div", {"id": "main"}).find_all("a"):
+  matches = soup.find("div", {"id": "main"})
+  if soup.find("div", {"id": "next_matches"}):
+    matches = soup.find("div", {"id": "next_matches"})
+  
+  for match in matches.find_all("a"):
     try:
       if any(cls.startswith('match__') for cls in match['class']):
         details = parse(match["href"])
@@ -70,14 +74,14 @@ def ics():
         f.write(f"DTSTAMP:{start_date}\n")
         f.write(f"UID:{details['league']}|{details['group']}|{details['home']}|{details['away']}\n")
         f.write(f"CREATED:{datetime.now().strftime('%Y%m%dT%H%M%SZ')}\n")
-        f.write(f"DESCRIPTION:{details['home']} x {details['away']}\n")
+        f.write(f"DESCRIPTION:{details['league']} - {details['group']}<br/>{details['comments']}\n")
         f.write(f"LAST-MODIFIED:{datetime.now().strftime('%Y%m%dT%H%M%SZ')}\n")
         f.write(f"SEQUENCE:0\n")
-        f.write(f"COMMENT:{details['comments']}\n")
         f.write(f"STATUS:CONFIRMED\n")
         f.write(f"LOCATION:{details['location']}\n")
         f.write(f"SUMMARY:{details['home']} x {details['away']}\n")
         f.write(f"TRANSP:OPAQUE\n")
+        f.write("END:VEVENT\n")
         
         print(f"{details['league']} | {details['group']} | {details['home']} x {details['away']} - {details['date']} às {details['time']} | {details['comments']}")
     except Exception as e: print(e)
