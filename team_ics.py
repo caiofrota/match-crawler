@@ -1,45 +1,50 @@
+from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import requests
-from bs4 import BeautifulSoup
+import re
 
-SOURCE = "https://www.placardefutebol.com.br/time/ceara/proximos-jogos"
-PRODID = "//Caio Frota//Jogos do Ceará v1.0//EN"
-CALNAME = "Jogos do Ceará"
-CALDESC = "Jogos do Ceará"
+SOURCE = "https://www.placardefutebol.com.br/champions-league"
+PRODID = "//Caio Frota//Match Crawler v1.0//EN"
+CALNAME = "Match Crawler"
+CALDESC = "Match Crawler"
 TIMEZONE = "America/Fortaleza"
 
-def fetch_matches():
-    url = SOURCE
-    r = requests.get(url)
-    soup = BeautifulSoup(r.text, "lxml")
-    return soup
 
 def convert_to_datetime(date_str, time_str):
-  # Parse date string
-  date_format = "%d/%m"
-  parsed_date = datetime.strptime(date_str, date_format)
+  parsed_date = datetime.strptime(f"{date_str} {time_str}", "%d/%m/%Y %H:%M")
+  return (parsed_date + timedelta(hours=3)).strftime("%Y%m%dT%H%M00Z")
 
-  # Parse time string
-  time_format = "%H:%M"
-  parsed_time = datetime.strptime(time_str, time_format).time()
+def fetch(url):
+  url = url
+  r = requests.get(url)
+  soup = BeautifulSoup(r.text, "lxml")
+  return soup
 
-  # Get current date for reference
-  current_date = datetime.now()
+def parse(url):
+  match = fetch(url)
+  d = dict()
+  
+  d["league"] = match.find("h2", {"class": "match__league-name"}).getText() if match.find("h2", {"class": "match__league-name"}) else ""
+  d["group"] = re.sub(r"\s+", " ", match.find("p", {"class": "match-group"}).getText().replace("\n", "").strip()) if match.find("p", {"class": "match-group"}) else ""
+  d["home"] = match.find_all("h4", {"class": "team_link"})[0].getText()
+  d["away"] = match.find_all("h4", {"class": "team_link"})[1].getText()
+  
+  details = match.find("div", {"class": "match-details"}).find_all("p")
+  d["date"] = ""
+  d["time"] = ""
+  d["comments"] = ""
+  d["location"] = ""
+  for detail in details:
+    if detail.find("img", title="Local da partida"): d["location"] = detail.getText()
+    if detail.find("img", title="Transmissão"): d["comments"] = detail.getText()
+    if detail.find("img", title="Data da partida"):
+      datetime = detail.getText().split(" às ")
+      d["date"] = datetime[0]
+      d["time"] = datetime[1]
+  
+  return d
 
-  # Determine the nearest future date for the provided month and day
-  future_date = datetime(current_date.year, parsed_date.month, parsed_date.day)
-  if future_date < current_date:
-    future_date = datetime(current_date.year + 1, parsed_date.month, parsed_date.day)
-
-  # Combine the future date and parsed time
-  result_datetime = datetime.combine(future_date.date(), parsed_time)
-
-  # Format the result as a string
-  result_str = (result_datetime + timedelta(hours=3)).strftime("%Y%m%dT%H%M00Z")
-
-  return result_str
-
-def main():
+def ics():
   f = open("calendar.ics", "w")
   f.write("BEGIN:VCALENDAR\n")
   f.write("VERSION:2.0\n")
@@ -50,33 +55,37 @@ def main():
   f.write(f"X-WR-TIMEZONE:{TIMEZONE}\n")
   f.write(f"X-WR-CALDESC:{CALDESC}\n")
   
-  soup = fetch_matches()
-  matches = soup.find_all("a", {"class": "match__lg"})
-  for match in matches:
-    league = match.find("div", {"class": "match__lg_card--league"}).string
-    home_team = match.find("div", {"class": "match__lg_card--ht-name"}).string
-    away_team = match.find("div", {"class": "match__lg_card--at-name"}).string
-    date = match.find("div", {"class": "match__lg_card--datetime"}).get_text().replace(" ", "").strip().split("\n")[0].split(",")[1]
-    time = match.find("div", {"class": "match__lg_card--datetime"}).get_text().replace(" ", "").strip().split("\n")[1]
-    start_date = convert_to_datetime(date, time)
-    end_date = (datetime.strptime(start_date, "%Y%m%dT%H%M00Z") + timedelta(hours=2)).strftime("%Y%m%dT%H%M00Z")
-    
-    f.write("BEGIN:VEVENT\n")
-    f.write(f"DTSTART:{start_date}\n")
-    f.write(f"DTEND:{end_date}\n")
-    f.write(f"DTSTAMP:{start_date}\n")
-    f.write(f"UID:cf2024:{league}{home_team}x{away_team}\n")
-    f.write(f"CREATED:{start_date}\n")
-    f.write(f"DESCRIPTION:{home_team} x {away_team}\n")
-    f.write(f"LAST-MODIFIED:{start_date}\n")
-    f.write(f"SEQUENCE:0\n")
-    f.write(f"STATUS:CONFIRMED\n")
-    f.write(f"LOCATION:{league}\n")
-    f.write(f"SUMMARY:{home_team} x {away_team}\n")
-    f.write(f"TRANSP:OPAQUE\n")
-    f.write("END:VEVENT\n")
+  soup = fetch(SOURCE)
+  for match in soup.find("div", {"id": "main"}).find_all("a"):
+    try:
+      if any(cls.startswith('match__') for cls in match['class']):
+        details = parse(match["href"])
+        
+        start_date = convert_to_datetime(details['date'], details['time'])
+        end_date = (datetime.strptime(start_date, "%Y%m%dT%H%M00Z") + timedelta(hours=2)).strftime("%Y%m%dT%H%M00Z")
+        
+        f.write("BEGIN:VEVENT\n")
+        f.write(f"DTSTART:{start_date}\n")
+        f.write(f"DTEND:{end_date}\n")
+        f.write(f"DTSTAMP:{start_date}\n")
+        f.write(f"UID:{details['league']}|{details['group']}|{details['home']}|{details['away']}\n")
+        f.write(f"CREATED:{datetime.now().strftime('%Y%m%dT%H%M%SZ')}\n")
+        f.write(f"DESCRIPTION:{details['home']} x {details['away']}\n")
+        f.write(f"LAST-MODIFIED:{datetime.now().strftime('%Y%m%dT%H%M%SZ')}\n")
+        f.write(f"SEQUENCE:0\n")
+        f.write(f"COMMENT:{details['comments']}\n")
+        f.write(f"STATUS:CONFIRMED\n")
+        f.write(f"LOCATION:{details['location']}\n")
+        f.write(f"SUMMARY:{details['home']} x {details['away']}\n")
+        f.write(f"TRANSP:OPAQUE\n")
+        
+        print(f"{details['league']} | {details['group']} | {details['home']} x {details['away']} - {details['date']} às {details['time']} | {details['comments']}")
+    except Exception as e: print(e)
     
   f.write("END:VCALENDAR")
   f.close()
-    
+
+def main():
+  ics()
+  
 main()
