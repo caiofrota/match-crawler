@@ -9,7 +9,7 @@ This example uses Python 3.10.12 and pip 22.0.2
 
 1. Install required libs
    
-    ```pip install bs4 lxml``
+    ```pip install bs4 lxml```
 
 2. Change the constants PRODID, CALNAME, CALDESC and TIMEZONE.
 
